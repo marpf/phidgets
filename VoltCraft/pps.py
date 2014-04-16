@@ -16,13 +16,22 @@ import sys
 # It just doesn't really make sense...
 # Please confirm the modelnumbers.
 #
-PPS_MODELS = { (18.0, 10.0) : "PPS11810", # not confirmed yet
-               (36.0,  5.0) : "PPS11360", # not confirmed yet
-               (60.0,  2.5) : "PPS11603", # not confirmed yet
-               (18.0, 20.0) : "PPS13610", # not confirmed yet
-               (36.2, 12.0) : "PPS16005", # confirmed
-               (60.0,  5.0) : "PPS11815"  # not confirmed yet
+#PPS_MODELS = { (18.0, 10.0) : "PPS11810", # not confirmed yet
+ #              (36.0,  5.0) : "PPS11360", # not confirmed yet
+ #              (60.0,  2.5) : "PPS11603", # not confirmed yet
+ #              (18.0, 20.0) : "PPS13610", # not confirmed yet
+ #              (36.2, 12.0) : "PPS16005", # confirmed
+ #              (60.5, 68.0) : "PPS11815"  # PPS returns 605680, not confirmed yet
+             #}
+PPS_MODELS = { 
+               #(18.0, 10.0) : "PPS11810", # not confirmed yet
+               #(36.0,  5.0) : "PPS11360", # not confirmed yet
+               #(60.0,  2.5) : "PPS11603", # not confirmed yet
+               #(18.0, 20.0) : "PPS13610", # not confirmed yet
+               "362120" : { 'model' : "PPS16005", 'Imax' : 36.2, 'Vmax' : 12.0, 'Iscale' : 10, 'Vscale' : 10} , # not confirmed
+               "605680" : { 'model' :  "PPS11815", 'Imax' : 6.8, 'Vmax' : 60.5, 'Iscale' : 100, 'Vscale' : 10 # confirmed
              }
+}
 
 PPS_TIMEOUT =1.00
 
@@ -94,16 +103,19 @@ class PPS(object):
         self._Serial.flushOutput()
         self._debug = bool(debug)
         try:
-            model = self.limits()
-            self._MODEL = PPS_MODELS[model]
-            self._VMAX = model[0]
-            self._IMAX = model[1]
+            ppsid= self.limits()
+            self._MODEL = PPS_MODELS[ppsid]
+            print self._MODEL
+            self._VMAX = self._MODEL['Vmax']
+            self._IMAX = self._MODEL['Imax']
+            self._Vscale = self._MODEL['Vscale']
+            self._Iscale = self._MODEL['Iscale']
         except serial.SerialTimeoutException:
             raise RuntimeError("No Voltcraft PPS powersupply "
                                "connected to %s" % port)
         except KeyError:
-            raise RuntimeError("Unkown Voltcraft PPS model with "
-                               "max V: %f, I: %f" % model)
+            raise RuntimeError("Unkown Voltcraft PPS model id %s "
+                               % ppsid)
         if bool(reset):
             self.output(0)
             self.voltage(0)
@@ -113,7 +125,7 @@ class PPS(object):
     
     VMAX = property(lambda x: x._VMAX, None, None, "maximum output voltage")
     IMAX = property(lambda x: x._IMAX, None, None, "maximum output current")
-    MODEL = property(lambda x: x._MODEL, None, None, "PS model number")
+    MODEL = property(lambda x: x._MODEL['model'], None, None, "PS model number")
 
     def _query(self, cmd):
         """
@@ -138,9 +150,7 @@ class PPS(object):
         get maximum voltage and current from PS
         """
         s = self._query("GMAX")
-        V = int(s[0:3]) / 10.
-        I = int(s[3:6]) / 10.
-        return (V, I)
+        return s
 
     def output(self, state):
         """
@@ -153,14 +163,14 @@ class PPS(object):
         """
         set voltage: silently saturates at 0 and VMAX
         """
-        voltage = max(min(int(float(voltage) * 10), int(self.VMAX*10)), 0)
+        voltage = max(min(int(float(voltage) * self._Vscale), int(self.VMAX*self._Vscale)), 0)
         self._query("VOLT%03d" % voltage)
 
     def current(self, current):
         """
         set current: silently saturates at 0 and IMAX
         """
-        current = max(min(int(float(current) * 10), int(self.IMAX*10)), 0)
+        current = max(min(int(float(current) * self._Iscale), int(self.IMAX*self._Iscale)), 0)
         self._query("CURR%03d" % current)
 
     def reading(self):
@@ -178,8 +188,8 @@ class PPS(object):
         store preset value tuples (voltage, current)
         """
         VC = VC0 + VC1 + VC2
-        V = map(lambda x: max(min(int(float(x)*10.), int(self.VMAX*10)), 0), VC[::2])
-        I = map(lambda x: max(min(int(float(x)*10.), int(self.IMAX*10)), 0), VC[1::2])
+        V = map(lambda x: max(min(int(float(x)*self._Vscale), int(self.VMAX*self._Vscale)), 0), VC[::2])
+        I = map(lambda x: max(min(int(float(x)*self._Iscale), int(self.IMAX*self._Iscale)), 0), VC[1::2])
         self._query("PROM" + "".join(["%03d%03d" % s for s in zip(V, I)]))
 
     def load_presets(self):
@@ -187,12 +197,12 @@ class PPS(object):
         load preset value tuples (voltage, current)
         """
         s = self._query("GETM")
-        V0 = int(s[ 0: 3]) / 10.
-        I0 = int(s[ 3: 6]) / 10.
-        V1 = int(s[ 7:10]) / 10.
-        I1 = int(s[10:13]) / 10.
-        V2 = int(s[14:17]) / 10.
-        I2 = int(s[17:20]) / 10.
+        V0 = int(s[ 0: 3]) / self._Vscale
+        I0 = int(s[ 3: 6]) / self._Iscale
+        V1 = int(s[ 7:10]) / self._Vscale
+        I1 = int(s[10:13]) / self._Iscale
+        V2 = int(s[14:17]) / self._Vscale
+        I2 = int(s[17:20]) / self._Iscale
         return [(V0, I0), (V1, I1), (V2, I2)]
         
     def use_preset(self, nbr):
@@ -208,8 +218,8 @@ class PPS(object):
         preset values: (voltage, current)
         """
         s = self._query("GETS")
-        V = int(s[0:3]) / 10.
-        I = int(s[3:6]) / 10.
+        V = int(s[0:3]) * self._Vscale 
+        I = int(s[3:6]) * self._Iscale
         return (V, I)
 
     @preset.setter
@@ -223,12 +233,14 @@ class PPS(object):
         preset voltage
         """
         s = self._query("GOVP")
-        V = int(s[0:3]) / 10.
+        V = int(s[0:3]) * self._Vscale
         return V
 
     @preset_voltage.setter
     def preset_voltage(self, voltage):
-        voltage = min(max(int(float(voltage) * 10), self.VMAX), 0)
+        print "voltage %s" % ( voltage)
+        voltage = max(min(int(float(voltage) * self._Vscale), int(self.VMAX*self._Vscale)), 0)
+        print "voltage %s" % ( voltage)
         self._query("SOVP%03d" % voltage)
 
     @property
@@ -237,12 +249,12 @@ class PPS(object):
         preset current
         """
         s = self._query("GOCP")
-        I = int(s[0:3]) / 10.
+        I = int(s[0:3]) * self._Iscale
         return I
 
     @preset_current.setter
     def preset_current(self, current):
-        current = min(max(int(float(current) * 10), self.IMAX), 0)
+        current = min(max(int(float(current) * self._Iscale), self.IMAX), 0)
         self._query("SOCP%03d" % current)
 
     def power_dissipation(self):
